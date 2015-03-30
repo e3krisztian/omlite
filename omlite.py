@@ -59,13 +59,13 @@ class Field(object):
 
 class ModelMeta(type):
 
-    PK_NAME = 'id'
+    PK_FIELD = 'id'
     DB_ATTRS = '__db_attrs'
 
     def __new__(meta, name, bases, attrs):
         cls = type.__new__(meta, name, bases, attrs)
         # set __db_attrs to be all of the Field()-s
-        db_attrs = [meta.PK_NAME]
+        db_attrs = [meta.PK_FIELD]
 
         for base_cls in bases:
             db_attrs.extend(
@@ -82,7 +82,9 @@ class ModelMeta(type):
         return cls
 
 
-class Mapper(object):
+class BaseMapper(object):
+
+    PK_FIELD = None
 
     def __init__(self):
         self.object = None
@@ -95,6 +97,9 @@ class Mapper(object):
         # initialize attributes
         for attr in self.db_attrs:
             setattr(object, attr, None)
+        self.mark_clean()
+
+    def mark_clean(self):
         self.modified_db_attrs.clear()
 
     def managed_attr_changed(self, attr):
@@ -102,44 +107,76 @@ class Mapper(object):
             self.modified_db_attrs.add(attr)
 
     def save(self):
-        if self.object.id is None:
+        if getattr(self.object, self.PK_FIELD) is None:
             self.create()
         elif self.modified_db_attrs:
             self.update()
 
     def create(self):
+        object = self.object
         self.before_create()
-        sql = 'INSERT INTO {}({}) VALUES ({})'.format(
-            self.object.get_sqlite3_table_name(),
-            ', '.join(self.modified_db_attrs),
-            ', '.join(['?'] * len(self.modified_db_attrs))
-        )
-        values = [getattr(self.object, attr) for attr in self.modified_db_attrs]
+        sql = 'INSERT INTO {table}({fields}) VALUES ({values})'.format(
+            table=object.get_sqlite3_table_name(),
+            fields=', '.join(self.modified_db_attrs),
+            values=', '.join(['?'] * len(self.modified_db_attrs)))
+        values = [getattr(object, attr) for attr in self.modified_db_attrs]
         with get_cursor(sql, values) as cursor:
             self.after_create(cursor)
-        self.modified_db_attrs.clear()
+        self.mark_clean()
 
     def before_create(self):
         pass
 
     def after_create(self, cursor):
-        self.object.id = cursor.lastrowid
+        pass
 
     def update(self):
-        sql = 'UPDATE {} SET {} WHERE id=?'.format(
-            self.object.get_sqlite3_table_name(),
-            ', '.join(
-                '{} = ?'.format(attr) for attr in self.modified_db_attrs))
-        values = [getattr(self.object, attr) for attr in self.modified_db_attrs]
-        values += [self.object.id]
-        execute_sql(sql, values)
-        self.modified_db_attrs.clear()
+        assert self.PK_FIELD not in self.modified_db_attrs
+        object = self.object
+        fields = ['{} = ?'.format(attr) for attr in self.modified_db_attrs]
+        values = [getattr(object, attr) for attr in self.modified_db_attrs]
+        pk_value = getattr(object, self.PK_FIELD)
+
+        sql = 'UPDATE {table} SET {fields} WHERE {id}=?'.format(
+            table=object.get_sqlite3_table_name(),
+            fields=', '.join(fields),
+            id=self.PK_FIELD)
+
+        execute_sql(sql, values + [pk_value])
+        self.mark_clean()
 
     def delete(self):
-        sql = 'DELETE FROM {} WHERE id=?'.format(
-            self.object.get_sqlite3_table_name())
-        execute_sql(sql, [self.object.id])
-        self.object.id = None
+        object = self.object
+        sql = 'DELETE FROM {table} WHERE {id}=?'.format(
+            table=object.get_sqlite3_table_name(), id=self.PK_FIELD)
+        execute_sql(sql, [getattr(object, self.PK_FIELD)])
+        setattr(object, self.PK_FIELD, None)
+        # mark all non-pk attributes modified for re-save
+        self.modified_db_attrs.update(
+            attr
+            for attr in self.db_attrs
+            if getattr(object, attr) is not None)
+
+
+class Mapper(BaseMapper):
+
+    PK_FIELD = 'id'
+
+    def after_create(self, cursor):
+        setattr(self.object, self.PK_FIELD, cursor.lastrowid)
+
+
+def _read_row(row_class, cursor):
+    row = next(cursor)
+    obj = row_class()
+    for idx, col in enumerate(cursor.description):
+        dbattr = col[0]
+        field = getattr(row_class, dbattr)
+        assert isinstance(field, Field)
+        # TODO: convert value as specified by Field
+        setattr(obj, dbattr, row[idx])
+    obj.mark_db_attributes_clean()
+    return obj
 
 
 class BaseModel(object):
@@ -152,43 +189,24 @@ class BaseModel(object):
         super(BaseModel, self).__setattr__(name, value)
         self.__object_mapper.managed_attr_changed(name)
 
+    def mark_db_attributes_clean(self):
+        self.__object_mapper.mark_clean()
+
     @classmethod
     def get_sqlite3_table_name(cls):
         return getattr(cls, 'sqlite3_table_name', cls.__name__.lower())
 
-    # CRUD
-    # Create
-    # Update
     def save(self):
         self.__object_mapper.save()
 
-    # Read
     @classmethod
-    def _read(cls, cursor):
-        row = next(cursor)
-        obj = cls()
-        for idx, col in enumerate(cursor.description):
-            dbattr = col[0]
-            field = getattr(cls, dbattr)
-            assert isinstance(field, Field)
-            # TODO: convert value as specified by Field
-            setattr(obj, dbattr, row[idx])
-        # FIXME: mark obj as clean object - no need to save/update
-        return obj
-
-    @classmethod
-    def select(cls, where, *params):
-        sql = 'SELECT * FROM {} WHERE {}'.format(
-            cls.get_sqlite3_table_name(), where)
+    def select(cls, sql_predicate, *params):
+        sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
+            table=cls.get_sqlite3_table_name(), predicate=sql_predicate)
         with get_cursor(sql, params) as cursor:
             while True:
-                yield cls._read(cursor)
+                yield _read_row(cls, cursor)
 
-    @classmethod
-    def by_id(cls, id):
-        return list(cls.select('id=?', id))[0]
-
-    # Delete
     def delete(self):
         self.__object_mapper.delete()
 
@@ -197,11 +215,15 @@ class Model(BaseModel):
 
     __metaclass__ = ModelMeta
 
-    # primary key
+    # primary key managed by omlite
     id = Field('INTEGER PRIMARY KEY')
 
     def __init__(self):
         super(Model, self).__init__(Mapper())
+
+    @classmethod
+    def by_id(cls, id):
+        return list(cls.select('id=?', id))[0]
 
 
 ##############################################################################
