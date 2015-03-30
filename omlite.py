@@ -59,43 +59,98 @@ class Field(object):
 
 class ModelMeta(type):
 
+    PK_NAME = 'id'
+    DB_ATTRS = '__db_attrs'
+
     def __new__(meta, name, bases, attrs):
-        # set _db_attrs to be all of the Field()-s
-        db_attrs = ['id']
+        cls = type.__new__(meta, name, bases, attrs)
+        # set __db_attrs to be all of the Field()-s
+        db_attrs = [meta.PK_NAME]
+
         for base_cls in bases:
             db_attrs.extend(
-                attr for attr in getattr(base_cls, '_db_attrs', ())
+                attr
+                for attr in getattr(base_cls, meta.DB_ATTRS, ())
                 if attr not in db_attrs)
+
         db_attrs.extend(
-            attr_name
-            for attr_name, attr_value in attrs.items()
-            if attr_name not in db_attrs and isinstance(attr_value, Field))
-        cls = type.__new__(
-            meta, name, bases, dict(attrs, _db_attrs=tuple(db_attrs)))
+            attr
+            for attr, attr_value in attrs.items()
+            if attr not in db_attrs and isinstance(attr_value, Field))
+
+        setattr(cls, meta.DB_ATTRS, db_attrs)
         return cls
 
 
-class Model(object):
-
-    __metaclass__ = ModelMeta
-
-    # primary key
-    id = Field('INTEGER PRIMARY KEY')
-
-    _db_attrs = ()
+class Mapper(object):
 
     def __init__(self):
-        self.__modified_db_attrs = set()
-        # set all fields to None
-        for attr in self._db_attrs:
-            setattr(self, attr, None)
-        # make all fields clean
-        self.__modified_db_attrs.clear()
+        self.object = None
+        self.db_attrs = ()
+        self.modified_db_attrs = set()
+
+    def connect(self, object):
+        self.object = object
+        self.db_attrs = getattr(object, ModelMeta.DB_ATTRS)
+        # initialize attributes
+        for attr in self.db_attrs:
+            setattr(object, attr, None)
+        self.modified_db_attrs.clear()
+
+    def managed_attr_changed(self, attr):
+        if attr in self.db_attrs:
+            self.modified_db_attrs.add(attr)
+
+    def save(self):
+        if self.object.id is None:
+            self.create()
+        elif self.modified_db_attrs:
+            self.update()
+
+    def create(self):
+        self.before_create()
+        sql = 'INSERT INTO {}({}) VALUES ({})'.format(
+            self.object.get_sqlite3_table_name(),
+            ', '.join(self.modified_db_attrs),
+            ', '.join(['?'] * len(self.modified_db_attrs))
+        )
+        values = [getattr(self.object, attr) for attr in self.modified_db_attrs]
+        with get_cursor(sql, values) as cursor:
+            self.after_create(cursor)
+        self.modified_db_attrs.clear()
+
+    def before_create(self):
+        pass
+
+    def after_create(self, cursor):
+        self.object.id = cursor.lastrowid
+
+    def update(self):
+        sql = 'UPDATE {} SET {} WHERE id=?'.format(
+            self.object.get_sqlite3_table_name(),
+            ', '.join(
+                '{} = ?'.format(attr) for attr in self.modified_db_attrs))
+        values = [getattr(self.object, attr) for attr in self.modified_db_attrs]
+        values += [self.object.id]
+        execute_sql(sql, values)
+        self.modified_db_attrs.clear()
+
+    def delete(self):
+        sql = 'DELETE FROM {} WHERE id=?'.format(
+            self.object.get_sqlite3_table_name())
+        execute_sql(sql, [self.object.id])
+        self.object.id = None
+
+
+class BaseModel(object):
+
+    def __init__(self, mapper):
+        self.__object_mapper = mapper
+        self.__object_mapper.connect(self)
 
     def __setattr__(self, name, value):
-        super(Model, self).__setattr__(name, value)
-        if name in self._db_attrs:
-            self.__modified_db_attrs.add(name)
+        super(BaseModel, self).__setattr__(name, value)
+        self.__object_mapper.managed_attr_changed(name)
 
     @classmethod
     def get_sqlite3_table_name(cls):
@@ -105,31 +160,7 @@ class Model(object):
     # Create
     # Update
     def save(self):
-        if self.id is None:
-            self._create()
-        elif self.__modified_db_attrs:
-            self._update()
-
-    def _create(self):
-        sql = 'INSERT INTO {}({}) VALUES ({})'.format(
-            self.get_sqlite3_table_name(),
-            ', '.join(self.__modified_db_attrs),
-            ', '.join(['?'] * len(self.__modified_db_attrs))
-        )
-        values = [getattr(self, attr) for attr in self.__modified_db_attrs]
-        with get_cursor(sql, values) as cursor:
-            self.id = cursor.lastrowid
-        self.__modified_db_attrs.clear()
-
-    def _update(self):
-        sql = 'UPDATE {} SET {} WHERE id=?'.format(
-            self.get_sqlite3_table_name(),
-            ', '.join(
-                '{} = ?'.format(attr) for attr in self.__modified_db_attrs))
-        values = [getattr(self, attr) for attr in self.__modified_db_attrs]
-        values += [self.id]
-        execute_sql(sql, values)
-        self.__modified_db_attrs.clear()
+        self.__object_mapper.save()
 
     # Read
     @classmethod
@@ -159,10 +190,18 @@ class Model(object):
 
     # Delete
     def delete(self):
-        sql = 'DELETE FROM {} WHERE id=?'.format(
-            self.get_sqlite3_table_name())
-        execute_sql(sql, [self.id])
-        self.id = None
+        self.__object_mapper.delete()
+
+
+class Model(BaseModel):
+
+    __metaclass__ = ModelMeta
+
+    # primary key
+    id = Field('INTEGER PRIMARY KEY')
+
+    def __init__(self):
+        super(Model, self).__init__(Mapper())
 
 
 ##############################################################################
