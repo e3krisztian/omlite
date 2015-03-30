@@ -1,6 +1,6 @@
 '''
-O       M             LITE
-  bject   apper for SQ     - an experiment
+O      M            LITE
+ bject  apper for SQ     - an experiment
 
 the R from ORM is intentionally missing, R is support for relations.
 '''
@@ -34,8 +34,8 @@ def connect(db):
 
 def get_cursor(sql, params):
     '''
-    with get_cursor() as c:
-        c.exe...()
+    with get_cursor('INSERT ... ?', ['1', ...]) as c:
+        # work with cursor c
     '''
     cursor = connection.cursor()
     try:
@@ -147,7 +147,8 @@ class Model(object):
 
     @classmethod
     def select(cls, where, *params):
-        sql = 'SELECT * FROM {} WHERE {}'.format(cls.get_sqlite3_table_name(), where)
+        sql = 'SELECT * FROM {} WHERE {}'.format(
+            cls.get_sqlite3_table_name(), where)
         with get_cursor(sql, params) as cursor:
             while True:
                 yield cls._read(cursor)
@@ -158,7 +159,8 @@ class Model(object):
 
     # Delete
     def delete(self):
-        sql = 'DELETE FROM {} WHERE id=?'.format(self.get_sqlite3_table_name())
+        sql = 'DELETE FROM {} WHERE id=?'.format(
+            self.get_sqlite3_table_name())
         execute_sql(sql, [self.id])
         self.id = None
 
@@ -171,8 +173,10 @@ class A(Model):
     sqlite3_table_name = 'aa'
     a = Field()
 
+
 class B(Model):
     b = Field()
+
 
 class X(A, B):
     x = Field()
