@@ -1,7 +1,7 @@
 import unittest
 
 import omlite
-from omlite import Model, Field
+from omlite import Model, Field, UUIDModel
 
 
 class A(Model):
@@ -18,6 +18,9 @@ class AB(A, B):
     x = Field()
 
 
+TEST_UUID = '9764d716-2b5b-4a6f-9c75-621377a80028'
+
+
 def given_a_database():
     omlite.connect(':memory:')
     omlite.connection.executescript(
@@ -30,10 +33,19 @@ def given_a_database():
         insert into b(id, b) values (2, 'B() in db at 2');
         create table x(id integer primary key, a, b, x);
         insert into x(id, b) values (2, 'X() in db at 2');
+        create table f(id varchar primary key, future);
+        insert into f(id, future)
+            values ('9764d716-2b5b-4a6f-9c75-621377a80028', '?');
         ''')
 
 
-class Test_Model_READ(unittest.TestCase):
+class TestCase(unittest.TestCase):
+
+    def setUp(self):
+        given_a_database()
+
+
+class Test_Model_READ(TestCase):
 
     def test_get_sqlite3_table_name(self):
         self.assertEqual('model', Model.get_sqlite3_table_name())
@@ -41,8 +53,6 @@ class Test_Model_READ(unittest.TestCase):
         self.assertEqual('b', B.get_sqlite3_table_name())
 
     def test_by_id(self):
-        given_a_database()
-
         a = A.by_id(0)
 
         self.assertEqual(0, a.id)
@@ -56,10 +66,9 @@ class Test_Model_READ(unittest.TestCase):
         self.assertIsInstance(b, B)
 
 
-class Test_Model_CREATE(unittest.TestCase):
+class Test_Model_CREATE(TestCase):
 
     def test(self):
-        given_a_database()
         a = A()
         a.a = 'A created in db'
         a.save()
@@ -69,10 +78,9 @@ class Test_Model_CREATE(unittest.TestCase):
         self.assertEqual('A created in db', a_from_db.a)
 
 
-class Test_Model_UPDATE(unittest.TestCase):
+class Test_Model_UPDATE(TestCase):
 
     def test(self):
-        given_a_database()
         a = A.by_id(0)
         a.a = 'overwritten field'
         a.save()
@@ -82,18 +90,16 @@ class Test_Model_UPDATE(unittest.TestCase):
         self.assertNotEqual(id(a), id(a_from_db))
 
 
-class Test_Model_DELETE(unittest.TestCase):
+class Test_Model_DELETE(TestCase):
 
     def test_deleted(self):
-        given_a_database()
         a = A.by_id(0)
         a.delete()
 
         self.assertIsNone(a.id)
-        self.assertRaises(IndexError, A.by_id, 0)
+        self.assertRaises(LookupError, A.by_id, 0)
 
     def test_deleted_can_be_resaved_with_new_id(self):
-        given_a_database()
         a = A.by_id(0)
         a.delete()
 
@@ -103,26 +109,56 @@ class Test_Model_DELETE(unittest.TestCase):
         self.assertEqual(a.a, a_from_db.a)
 
 
-class Test_Model_inheritance(unittest.TestCase):
+class Test_Model_inheritance(TestCase):
 
     def test_by_id(self):
-        given_a_database()
-
         ab = AB.by_id(2)
 
         self.assertEqual(ab.b, 'X() in db at 2')
 
     def test_update(self):
-        given_a_database()
-
         ab = AB.by_id(2)
         ab.a = 'persisted attribute'
         ab.save()
 
-        ab_from_db = ab.by_id(2)
+        ab_from_db = AB.by_id(2)
 
         self.assertEqual(ab_from_db.b, 'X() in db at 2')
         self.assertEqual(ab.a, 'persisted attribute')
+
+
+class F(UUIDModel):
+    future = Field()
+
+
+class Test_UUIDModel(TestCase):
+
+    def test_create(self):
+        f = F()
+        f.future = 'newly saved'
+        f.save()
+
+        from_db = F.by_id(f.id)
+        self.assertEqual('newly saved', from_db.future)
+
+    def test_update(self):
+        f = F.by_id(TEST_UUID)
+        f.future = 'unknown'
+        f.save()
+
+        from_db = F.by_id(TEST_UUID)
+        self.assertEqual('unknown', from_db.future)
+
+    def test_delete(self):
+        f = F.by_id(TEST_UUID)
+        f.delete()
+
+        self.assertIsNone(f.id)
+        self.assertRaises(LookupError, F.by_id, TEST_UUID)
+
+    def test_by_id(self):
+        from_db = F.by_id(TEST_UUID)
+        self.assertEqual('?', from_db.future)
 
 
 if __name__ == '__main__':
