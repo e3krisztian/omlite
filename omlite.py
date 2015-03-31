@@ -82,9 +82,9 @@ class ModelMeta(type):
         return cls
 
 
-class BaseMapper(object):
+class Mapper(object):
 
-    PK_FIELD = None
+    PK_FIELD = 'id'
 
     def __init__(self):
         self.object = None
@@ -128,7 +128,7 @@ class BaseMapper(object):
         pass
 
     def after_create(self, cursor):
-        pass
+        setattr(self.object, self.PK_FIELD, cursor.lastrowid)
 
     def update(self):
         assert self.PK_FIELD not in self.modified_db_attrs
@@ -156,14 +156,6 @@ class BaseMapper(object):
             attr
             for attr in self.db_attrs
             if getattr(object, attr) is not None)
-
-
-class Mapper(BaseMapper):
-
-    PK_FIELD = 'id'
-
-    def after_create(self, cursor):
-        setattr(self.object, self.PK_FIELD, cursor.lastrowid)
 
 
 def _read_row(row_class, cursor):
