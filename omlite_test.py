@@ -13,7 +13,8 @@ class B(Model):
     b = Field()
 
 
-class X(A, B):
+class AB(A, B):
+    sqlite3_table_name = 'x'
     x = Field()
 
 
@@ -55,7 +56,7 @@ class Test_Model_READ(unittest.TestCase):
         self.assertIsInstance(b, B)
 
 
-class Test_CREATE(unittest.TestCase):
+class Test_Model_CREATE(unittest.TestCase):
 
     def test(self):
         given_a_database()
@@ -68,7 +69,7 @@ class Test_CREATE(unittest.TestCase):
         self.assertEqual('A created in db', a_from_db.a)
 
 
-class Test_UPDATE(unittest.TestCase):
+class Test_Model_UPDATE(unittest.TestCase):
 
     def test(self):
         given_a_database()
@@ -81,7 +82,7 @@ class Test_UPDATE(unittest.TestCase):
         self.assertNotEqual(id(a), id(a_from_db))
 
 
-class Test_DELETE(unittest.TestCase):
+class Test_Model_DELETE(unittest.TestCase):
 
     def test_deleted(self):
         given_a_database()
@@ -100,6 +101,29 @@ class Test_DELETE(unittest.TestCase):
 
         a_from_db = A.by_id(a.id)
         self.assertEqual(a.a, a_from_db.a)
+
+
+class Test_Model_inheritance(unittest.TestCase):
+
+    def test_by_id(self):
+        given_a_database()
+
+        ab = AB.by_id(2)
+
+        self.assertEqual(ab.b, 'X() in db at 2')
+
+    def test_update(self):
+        given_a_database()
+
+        ab = AB.by_id(2)
+        ab.a = 'persisted attribute'
+        ab.save()
+
+        ab_from_db = ab.by_id(2)
+
+        self.assertEqual(ab_from_db.b, 'X() in db at 2')
+        self.assertEqual(ab.a, 'persisted attribute')
+
 
 if __name__ == '__main__':
     unittest.main()
