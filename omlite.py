@@ -3,12 +3,28 @@ O      M            LITE
  bject  apper for SQ     - an experiment
 
 the R from ORM is intentionally missing, R is support for relations.
+
+Restrictions by design:
+
+- single database
+- maps class to table, table row to object isinstances
+- relations are *NOT* supported, only single objects
+- the name of the primary key is *id*.
+- no query language - SQL has one already
 '''
 
 import contextlib
 import functools
 import sqlite3
 import uuid
+
+
+__all__ = (
+    'connect', 'connection', 'execute_sql'
+    'Model', 'UUIDModel', 'Field',
+    'enable_foreign_keys', 'disable_foreign_keys',
+    'transaction',
+)
 
 connection = None
 
@@ -29,7 +45,10 @@ def connect(db):
     enable_foreign_keys()
 
 
-# TODO: create_table(Model)
+# TODO: BaseModel.__init__(**field_values)
+# TODO: BaseModel.create()
+# TODO: create_table(*Model)
+# TODO: python3 support
 # FIXME: CRUD operations must be executable only inside transactions!
 
 
