@@ -1,6 +1,6 @@
 import unittest
 
-import omlite
+import omlite as m
 from omlite import Model, Field, UUIDModel
 
 
@@ -22,8 +22,8 @@ TEST_UUID = '9764d716-2b5b-4a6f-9c75-621377a80028'
 
 
 def given_a_database():
-    omlite.connect(':memory:')
-    omlite.connection.executescript(
+    m.connect(':memory:')
+    m.connection.executescript(
         '''\
         create table aa(id integer primary key, a);
         insert into aa(id, a) values (0, 'A() in db at 0');
@@ -159,6 +159,78 @@ class Test_UUIDModel(TestCase):
     def test_by_id(self):
         from_db = F.by_id(TEST_UUID)
         self.assertEqual('?', from_db.future)
+
+
+class TestException(Exception):
+    pass
+
+
+class Test_transaction(TestCase):
+
+    def test_exception_rolls_back_changes(self):
+        try:
+            with m.transaction():
+                f = F.by_id(TEST_UUID)
+                f.delete()
+
+                raise TestException()
+        except TestException:
+            f = F.by_id(TEST_UUID)
+            self.assertEqual('?', f.future)
+            return
+
+        self.fail('expected TestException was not raised')
+
+    def test_internal_exception_rolls_back_internal_only_changes(self):
+        def failing_internal_transaction():
+            b_id = None
+            try:
+                with m.transaction():
+                    b = B()
+                    b.b = 'new B'
+                    b.save()
+                    b_id = b.id
+
+                    raise TestException()
+            except TestException:
+                return b_id
+
+            self.fail('expected TestException was not raised')
+
+        with m.transaction():
+            a = A()
+            a.a = 'new A'
+            a.save()
+            a_id = a.id
+
+            b_id = failing_internal_transaction()
+            self.assertIsNotNone(b_id)
+
+        a = a.by_id(a_id)
+        self.assertEqual('new A', a.a)
+        self.assertRaises(LookupError, B.by_id, b_id)
+
+    def test_nested_w_outer_exception_rolls_back_all_changes(self):
+        try:
+            with m.transaction():
+                a = A()
+                a.a = 'new A'
+                a.save()
+                a_id = a.id
+
+                with m.transaction():
+                    b = B()
+                    b.b = 'new B'
+                    b.save()
+                    b_id = b.id
+
+                raise TestException()
+        except TestException:
+            self.assertRaises(LookupError, A.by_id, a_id)
+            self.assertRaises(LookupError, B.by_id, b_id)
+            return
+
+        self.fail('expected TestException was not raised')
 
 
 if __name__ == '__main__':

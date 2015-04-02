@@ -19,16 +19,17 @@ def pragma_foreign_keys(extra=''):
 enable_foreign_keys = functools.partial(pragma_foreign_keys, '=ON')
 disable_foreign_keys = functools.partial(pragma_foreign_keys, '=OFF')
 
+AUTOCOMMIT = None
+
 
 def connect(db):
     global connection
     connection = sqlite3.connect(db)
-    connection.isolation_level = 'EXCLUSIVE'
+    connection.isolation_level = AUTOCOMMIT
     enable_foreign_keys()
 
 
 # TODO: create_table(Model)
-# TODO: transactions
 # FIXME: CRUD operations must be executable only inside transactions!
 
 
@@ -239,3 +240,33 @@ class UUIDModel(BaseModel):
         a different UUID generator.
         '''
         return str(uuid.uuid1())
+
+
+# Transactions
+_transactions = 0
+
+
+@contextlib.contextmanager
+def transaction():
+    global _transactions
+    assert _transactions >= 0
+
+    # transactions work only when the connection is in autocommit mode
+    # https://pysqlite.readthedocs.org/en/latest/sqlite3.html#controlling-transactions
+    # https://github.com/ghaering/pysqlite/issues/24
+    # https://groups.google.com/forum/#!msg/sqlalchemy-devel/0lanNjxSpb0/6zriniGAfu0J
+    # http://bugs.python.org/issue10740
+    # http://rogerbinns.github.io/apsw/pysqlite.html#pysqlitediffs
+    assert connection.isolation_level is AUTOCOMMIT
+
+    savepoint_name = 'omlite_{}'.format(_transactions)
+    connection.execute('SAVEPOINT {}'.format(savepoint_name))
+    try:
+        _transactions += 1
+        yield
+        connection.execute('RELEASE SAVEPOINT {}'.format(savepoint_name))
+    except:
+        connection.execute('ROLLBACK TO SAVEPOINT {}'.format(savepoint_name))
+        raise
+    finally:
+        _transactions -= 1
