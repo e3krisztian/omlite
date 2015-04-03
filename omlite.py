@@ -20,7 +20,7 @@ import uuid
 
 
 __all__ = (
-    'connect', 'connection', 'execute_sql'
+    'connect', 'connection', 'execute_sql',
     'Model', 'UUIDModel', 'Field',
     'enable_foreign_keys', 'disable_foreign_keys',
     'transaction',
