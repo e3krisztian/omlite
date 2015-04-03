@@ -6,11 +6,15 @@ the R from ORM is intentionally missing, R is support for relations.
 
 Restrictions by design:
 
-- single database
 - maps class to table, table row to object isinstances
 - relations are *NOT* supported, only single objects
 - the name of the primary key is *id*.
 - no query language - SQL has one already
+
+TODO?: omlite.make(storable_class, **field_values)
+TODO: Database.create(object)
+TODO: create_table(storable_class)
+FIXME: CRUD operations must be executable only inside transactions!
 '''
 
 import contextlib
@@ -20,272 +24,292 @@ import uuid
 
 
 __all__ = (
-    'connect', 'connection', 'execute_sql',
-    'Model', 'UUIDModel', 'Field',
-    'enable_foreign_keys', 'disable_foreign_keys',
-    'transaction',
+    'Database',
+    'storable_pk_autoinc',
+    'storable_pk_netaddrtime_uuid1', 'storable_pk_random_uuid4',
+    'Field',
+    # for more control:
+    'database', 'table_name',
+    'get_storable',
+    'PrimaryKey', 'UUIDPrimaryKey', 'AutoincrementPrimaryKey',
 )
 
-connection = None
-
-
-def pragma_foreign_keys(extra=''):
-    return connection.execute('PRAGMA foreign_keys{}'.format(extra)).fetchone()
-
-enable_foreign_keys = functools.partial(pragma_foreign_keys, '=ON')
-disable_foreign_keys = functools.partial(pragma_foreign_keys, '=OFF')
 
 AUTOCOMMIT = None
+PK_FIELD = 'id'
+STORABLE_META_ATTR = '__omlite_meta'
 
 
-def connect(db):
-    global connection
-    connection = sqlite3.connect(db)
-    connection.isolation_level = AUTOCOMMIT
-    enable_foreign_keys()
+class Database(object):
 
+    connection = None
 
-# TODO: BaseModel.__init__(**field_values)
-# TODO: BaseModel.create()
-# TODO: create_table(*Model)
-# TODO: python3 support
-# FIXME: CRUD operations must be executable only inside transactions!
+    def __init__(self, dbref=':memory:'):
+        self.connection = None
+        self.open_transactions = 0
+        if dbref:
+            self.connect(dbref)
 
+    def connect(self, dbref):
+        '''
+        in sqlite3 dbref is either ':memory:' or a filename
+        '''
+        self.connection = sqlite3.connect(dbref)
+        self.connection.isolation_level = AUTOCOMMIT
+        self.enable_foreign_keys()
 
-def get_cursor(sql, params):
-    '''
-    with get_cursor('INSERT ... ?', ['1', ...]) as c:
-        # work with cursor c
-    '''
-    cursor = connection.cursor()
-    try:
-        cursor.execute(sql, params)
-        return contextlib.closing(cursor)
-    except:
-        cursor.close()
-        raise
+    # Administration
+    def pragma_foreign_keys(self, extra=''):
+        return self.connection.execute(
+            'PRAGMA foreign_keys{}'.format(extra)
+        ).fetchone()
 
+    def enable_foreign_keys(self):
+        self.pragma_foreign_keys(extra='=ON')
 
-def execute_sql(sql, params):
-    with get_cursor(sql, params):
-        pass
+    def disable_foreign_keys(self):
+        self.pragma_foreign_keys(extra='=OFF')
+
+    def get_cursor(self, sql, params):
+        '''
+        with get_cursor('INSERT ... ?', ['1', ...]) as c:
+            # work with cursor c
+        '''
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute(sql, params)
+            return contextlib.closing(cursor)
+        except:
+            cursor.close()
+            raise
+
+    def execute_sql(self, sql, params):
+        with self.get_cursor(sql, params):
+            pass
+
+    # CRUD
+    def get(self, storable_class, id):
+        return list(self.filter(storable_class, 'id=?', id))[0]
+
+    def filter(self, storable_class, sql_predicate, *params):
+        meta = get_class_meta(storable_class)
+
+        sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
+            table=meta.table_name, predicate=sql_predicate)
+
+        with self.get_cursor(sql, params) as cursor:
+            while True:
+                yield read_row(storable_class, cursor)
+
+    def save(self, object):
+        if object.id is None:
+            self.create(object)
+        else:
+            self.__update(object)
+
+    def create(self, object):
+        meta = get_meta(object)
+
+        meta.primary_key.generate_id(object)
+
+        sql = 'INSERT INTO {table}({fields}) VALUES ({values})'.format(
+            table=meta.table_name,
+            fields=', '.join(meta.ordered_fields),
+            values=', '.join(['?'] * len(meta.ordered_fields)))
+
+        values = [getattr(object, attr) for attr in meta.ordered_fields]
+        with self.get_cursor(sql, values) as cursor:
+            meta.primary_key.save_generated_id(cursor, object)
+
+    def __update(self, object):
+        meta = get_meta(object)
+        fields = ['{} = ?'.format(attr) for attr in meta.ordered_fields]
+        values = [getattr(object, attr) for attr in meta.ordered_fields]
+        pk_value = object.id
+
+        sql = 'UPDATE {table} SET {fields} WHERE id=?'.format(
+            table=meta.table_name,
+            fields=', '.join(fields))
+
+        self.execute_sql(sql, values + [pk_value])
+
+    def delete(self, object):
+        meta = get_meta(object)
+
+        sql = 'DELETE FROM {table} WHERE id=?'.format(table=meta.table_name)
+        self.execute_sql(sql, [object.id])
+
+        object.id = None
+
+    # Transactions
+    @contextlib.contextmanager
+    def transaction(self):
+        assert self.open_transactions >= 0
+
+        # transactions work only when the connection is in autocommit mode
+        # https://pysqlite.readthedocs.org/en/latest/sqlite3.html#controlling-transactions
+        # https://github.com/ghaering/pysqlite/issues/24
+        # https://groups.google.com/forum/#!msg/sqlalchemy-devel/0lanNjxSpb0/6zriniGAfu0J
+        # http://bugs.python.org/issue10740
+        # http://rogerbinns.github.io/apsw/pysqlite.html#pysqlitediffs
+        assert self.connection.isolation_level is AUTOCOMMIT
+
+        execute = self.connection.execute
+        savepoint_name = 'omlite_{}'.format(self.open_transactions)
+        execute('SAVEPOINT {}'.format(savepoint_name))
+        try:
+            self.open_transactions += 1
+            yield
+            execute('RELEASE SAVEPOINT {}'.format(savepoint_name))
+        except:
+            execute('ROLLBACK TO SAVEPOINT {}'.format(savepoint_name))
+            raise
+        finally:
+            self.open_transactions -= 1
+
+'''
+Single global instance - when only one database is needed
+'''
+db = Database()
 
 
 class Field(object):
 
-    def __init__(self, type=None):
-        self.type = type
+    def __init__(self, sql_declaration=None):
+        self.sql_declaration = sql_declaration
 
 
-PK_FIELD = 'id'
+class PrimaryKey(Field):
+
+    def generate_id(self, object):
+        pass
+
+    def save_generated_id(self, cursor, object):
+        if object.id is None:
+            object.id = cursor.lastrowid
 
 
-class ModelMeta(type):
-
-    DB_ATTRS = '__db_attrs'
-
-    def __new__(meta, name, bases, attrs):
-        cls = type.__new__(meta, name, bases, attrs)
-        # set __db_attrs to be all of the Field()-s
-        db_attrs = [PK_FIELD]
-
-        for base_cls in bases:
-            db_attrs.extend(
-                attr
-                for attr in getattr(base_cls, meta.DB_ATTRS, ())
-                if attr not in db_attrs)
-
-        db_attrs.extend(
-            attr
-            for attr, attr_value in attrs.items()
-            if attr not in db_attrs and isinstance(attr_value, Field))
-
-        setattr(cls, meta.DB_ATTRS, db_attrs)
-        return cls
-
-
-class Mapper(object):
-
-    def __init__(self, id_generator):
-        self.id_generator = id_generator
-        self.object = None
-        self.db_attrs = ()
-        self.modified_db_attrs = set()
-
-    def connect(self, object):
-        self.object = object
-        self.db_attrs = getattr(object, ModelMeta.DB_ATTRS)
-        # initialize attributes
-        for attr in self.db_attrs:
-            setattr(object, attr, None)
-        self.mark_clean()
-
-    def mark_clean(self):
-        self.modified_db_attrs.clear()
-
-    def managed_attr_changed(self, attr):
-        if attr in self.db_attrs:
-            self.modified_db_attrs.add(attr)
-
-    def save(self):
-        if self.object.id is None:
-            self.create()
-        elif self.modified_db_attrs:
-            self.update()
-
-    def create(self):
-        object = self.object
-        self.generate_id()
-        sql = 'INSERT INTO {table}({fields}) VALUES ({values})'.format(
-            table=object.get_sqlite3_table_name(),
-            fields=', '.join(self.modified_db_attrs),
-            values=', '.join(['?'] * len(self.modified_db_attrs)))
-        values = [getattr(object, attr) for attr in self.modified_db_attrs]
-        with get_cursor(sql, values) as cursor:
-            self.save_generated_id(cursor)
-        self.mark_clean()
-
-    def generate_id(self):
-        if self.id_generator:
-            self.object.id = self.id_generator()
-        # else: id is autogenerated on database side - nothing to do
-
-    def save_generated_id(self, cursor):
-        if self.id_generator is None:
-            # save database generated rowid
-            self.object.id = cursor.lastrowid
-        # else: self generated id is already on the object
-
-    def update(self):
-        assert PK_FIELD not in self.modified_db_attrs
-        object = self.object
-        fields = ['{} = ?'.format(attr) for attr in self.modified_db_attrs]
-        values = [getattr(object, attr) for attr in self.modified_db_attrs]
-        pk_value = object.id
-
-        sql = 'UPDATE {table} SET {fields} WHERE id=?'.format(
-            table=object.get_sqlite3_table_name(),
-            fields=', '.join(fields))
-
-        execute_sql(sql, values + [pk_value])
-        self.mark_clean()
-
-    def delete(self):
-        object = self.object
-        sql = 'DELETE FROM {table} WHERE id=?'.format(
-            table=object.get_sqlite3_table_name())
-        execute_sql(sql, [object.id])
-        object.id = None
-        # mark all non-pk attributes modified for re-save
-        self.modified_db_attrs.update(
-            attr
-            for attr in self.db_attrs
-            if getattr(object, attr) is not None)
-
-
-def _read_row(row_class, cursor):
-    row = next(cursor)
-    obj = row_class()
-    for idx, col in enumerate(cursor.description):
-        dbattr = col[0]
-        field = getattr(row_class, dbattr)
-        assert isinstance(field, Field)
-        # TODO: convert value as specified by Field
-        setattr(obj, dbattr, row[idx])
-    obj.mark_db_attributes_clean()
-    return obj
-
-
-class BaseModel(object):
-
-    id_generator = None
+class AutoincrementPrimaryKey(PrimaryKey):
 
     def __init__(self):
-        self.__object_mapper = Mapper(self.id_generator)
-        self.__object_mapper.connect(self)
-
-    def __setattr__(self, name, value):
-        super(BaseModel, self).__setattr__(name, value)
-        self.__object_mapper.managed_attr_changed(name)
-
-    def mark_db_attributes_clean(self):
-        self.__object_mapper.mark_clean()
-
-    @classmethod
-    def get_sqlite3_table_name(cls):
-        return getattr(cls, 'sqlite3_table_name', cls.__name__.lower())
-
-    def save(self):
-        self.__object_mapper.save()
-
-    @classmethod
-    def select(cls, sql_predicate, *params):
-        sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
-            table=cls.get_sqlite3_table_name(), predicate=sql_predicate)
-        with get_cursor(sql, params) as cursor:
-            while True:
-                yield _read_row(cls, cursor)
-
-    @classmethod
-    def by_id(cls, id):
-        return list(cls.select('id=?', id))[0]
-
-    def delete(self):
-        self.__object_mapper.delete()
+        super(AutoincrementPrimaryKey, self).__init__('INTEGER PRIMARY KEY')
 
 
-class Model(BaseModel):
+class UUIDPrimaryKey(PrimaryKey):
 
-    __metaclass__ = ModelMeta
+    def __init__(self, uuid_generator):
+        super(UUIDPrimaryKey, self).__init__('VARCHAR PRIMARY KEY')
+        self.uuid_generator = uuid_generator
 
-    # primary key managed by omlite
-    id = Field('INTEGER PRIMARY KEY')
+    def generate_id(self, object):
+        if object.id is None:
+            object.id = str(self.uuid_generator())
 
 
-class UUIDModel(BaseModel):
+def get_db_fields(cls):
+    fields = {}
 
-    ''' A Model whose id's are uuid-s.
+    for attr in dir(cls):
+        field = getattr(cls, attr)
+        if isinstance(field, Field):
+            fields[attr] = field
+
+    assert isinstance(fields[PK_FIELD], PrimaryKey)
+    return fields
+
+
+class StorableMeta(object):
+
+    def __init__(self, storable_class):
+        self.fields = get_db_fields(storable_class)
+        self.ordered_fields = tuple(sorted(self.fields))
+        self.primary_key = self.fields[PK_FIELD]
+        self.database = db
+        self.table_name = storable_class.__name__.lower()
+
+    def initialize_fields(self, object):
+        ''' initialize all uninitialized database fields to None'''
+        for attr, field in self.fields.items():
+            if getattr(object, attr) is field:
+                setattr(object, attr, None)
+
+
+def database(database):
+    ''' Set database on a storable class
+
+    @database(dbx)
+    @storable
+    class Data(object):
+        ...
     '''
-
-    __metaclass__ = ModelMeta
-
-    # primary key managed by omlite
-    id = Field('VARCHAR PRIMARY KEY')
-
-    def id_generator(self):
-        ''' Generates a UUID as string.
-
-        This one generates UUID1, override in a derived class to use
-        a different UUID generator.
-        '''
-        return str(uuid.uuid1())
+    def decorate(storable_class):
+        meta = get_class_meta(storable_class)
+        assert meta is not None
+        meta.database = database
+        return storable_class
+    return decorate
 
 
-# Transactions
-_transactions = 0
+def table_name(table_name):
+    ''' Set table_name on a storable class
+
+    @table_name('special_name')
+    @storable
+    class Data(object):
+        ...
+    '''
+    def decorate(storable_class):
+        meta = get_class_meta(storable_class)
+        assert meta is not None
+        meta.table_name = table_name
+        return storable_class
+    return decorate
 
 
-@contextlib.contextmanager
-def transaction():
-    global _transactions
-    assert _transactions >= 0
+def get_storable(cls, id):
+    setattr(cls, PK_FIELD, id)
+    assert PK_FIELD in dir(cls)
+    meta = StorableMeta(cls)
 
-    # transactions work only when the connection is in autocommit mode
-    # https://pysqlite.readthedocs.org/en/latest/sqlite3.html#controlling-transactions
-    # https://github.com/ghaering/pysqlite/issues/24
-    # https://groups.google.com/forum/#!msg/sqlalchemy-devel/0lanNjxSpb0/6zriniGAfu0J
-    # http://bugs.python.org/issue10740
-    # http://rogerbinns.github.io/apsw/pysqlite.html#pysqlitediffs
-    assert connection.isolation_level is AUTOCOMMIT
+    class decorated(cls):
+        def __init__(self, *args, **kwargs):
+            super(decorated, self).__init__(*args, **kwargs)
+            meta.initialize_fields(self)
+    decorated.__name__ = 'omlite_{}'.format(cls.__name__)
+    setattr(decorated, STORABLE_META_ATTR, meta)
+    return decorated
 
-    savepoint_name = 'omlite_{}'.format(_transactions)
-    connection.execute('SAVEPOINT {}'.format(savepoint_name))
-    try:
-        _transactions += 1
-        yield
-        connection.execute('RELEASE SAVEPOINT {}'.format(savepoint_name))
-    except:
-        connection.execute('ROLLBACK TO SAVEPOINT {}'.format(savepoint_name))
-        raise
-    finally:
-        _transactions -= 1
+storable_pk_autoinc = functools.partial(
+    get_storable,
+    id=AutoincrementPrimaryKey())
+
+storable_pk_netaddrtime_uuid1 = functools.partial(
+    get_storable,
+    id=UUIDPrimaryKey(uuid.uuid1))
+
+storable_pk_random_uuid4 = functools.partial(
+    get_storable,
+    id=UUIDPrimaryKey(uuid.uuid4))
+
+
+def get_class_meta(storable_class):
+    return getattr(storable_class, STORABLE_META_ATTR)
+
+
+def get_meta(object):
+    return get_class_meta(object.__class__)
+
+
+def read_row(storable_class, cursor):
+    meta = get_class_meta(storable_class)
+
+    row = next(cursor)
+    obj = storable_class()
+    for idx, col in enumerate(cursor.description):
+        dbattr = col[0]
+        assert dbattr in meta.fields
+        # TODO: convert/validate value as specified by Field
+        setattr(obj, dbattr, row[idx])
+
+    meta.initialize_fields(obj)
+    return obj
