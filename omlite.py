@@ -22,12 +22,14 @@ import uuid
 
 
 __all__ = (
-    'Database',
+    'db',
     'storable_pk_autoinc',
     'storable_pk_netaddrtime_uuid1', 'storable_pk_random_uuid4',
     'Field',
-    # for more control:
-    'database', 'table_name',
+    # CRUD / Data Mapper functions
+    'get', 'filter', 'save', 'create', 'delete',
+    # for more control and extras
+    'Database', 'database', 'table_name',
     'get_storable',
     'PrimaryKey', 'UUIDPrimaryKey', 'AutoincrementPrimaryKey',
 )
@@ -263,10 +265,16 @@ def read_row(storable_class, cursor):
 
 # CRUD / Object Mapper
 def get(storable_class, id):
+    ''' I retrieve an object from database by its :id.
+
+    raise LookupError if no row was found.
+    '''
     return list(filter(storable_class, 'id=?', id))[0]
 
 
 def filter(storable_class, sql_predicate, *params):
+    ''' I am streaming objects from database that match the predicate.
+    '''
     meta = get_class_meta(storable_class)
 
     sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
@@ -278,6 +286,11 @@ def filter(storable_class, sql_predicate, *params):
 
 
 def save(object):
+    ''' I create new or update an existing object in database.
+
+    An object is treated as new, if its :id is None.
+    If the object's id is not None, the matching row is updated.
+    '''
     if object.id is None:
         create(object)
     else:
@@ -285,11 +298,11 @@ def save(object):
 
 
 def create(object):
-    ''' Create a new database row for object.
+    ''' I create a new database row for object.
 
     There are two cases:
     - the object has None in the id field
-      - a generated id is assigned
+      - a generated id is assigned to :object.id
     - the object has the id field pre-filled
       - object is inserted into database with the given id
     '''
@@ -321,6 +334,10 @@ def _update(object):
 
 
 def delete(object):
+    ''' I delete object from database.
+
+    I also set the object's :id to None, so it can be resaved if needed.
+    '''
     meta = get_meta(object)
 
     sql = 'DELETE FROM {table} WHERE id=?'.format(table=meta.table_name)
