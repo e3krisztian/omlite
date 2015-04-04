@@ -3,8 +3,8 @@ import unittest
 from omlite import db, Field
 from omlite import storable_pk_autoinc, storable_pk_netaddrtime_uuid1
 from omlite import get_class_meta, table_name
+from omlite import Database, database
 import omlite as m
-# TODO: test @database
 
 
 @table_name('aa')
@@ -275,6 +275,76 @@ class Test_transaction(TestCase):
             return
 
         self.fail('expected TestException was not raised')
+
+db2 = Database()
+
+
+@database(db2)
+@table_name('aa')
+@storable_pk_autoinc
+class A2(A):
+    pass
+
+
+class Test_multiple_databases(unittest.TestCase):
+
+    def setUp(self):
+        db.connect(':memory:')
+        db.connection.executescript(
+            '''\
+            create table aa(id integer primary key, a);
+            insert into aa(id, a) values (0, 'A() in db at 0');
+            ''')
+        db2.connect(':memory:')
+        db2.connection.executescript(
+            '''\
+            create table aa(id integer primary key, a);
+            insert into aa(id, a) values (0, 'A2() in db2 at 0');
+            ''')
+        # db and db2 are two different in-memory databases
+        # see https://www.sqlite.org/inmemorydb.html
+
+    def test_meta(self):
+        self.assertEqual(
+            get_class_meta(A).table_name,
+            get_class_meta(A2).table_name)
+
+        self.assertNotEqual(
+            get_class_meta(A).database,
+            get_class_meta(A2).database)
+
+    def test_get(self):
+        a = m.get(A, 0)
+        a2 = m.get(A2, 0)
+
+        self.assertEqual('A() in db at 0', a.a)
+        self.assertEqual('A2() in db2 at 0', a2.a)
+
+    def test_delete(self):
+        a2 = m.get(A2, 0)
+        m.delete(a2)
+
+        m.get(A, 0)
+        self.assertRaises(LookupError, m.get, A2, 0)
+
+    def test_update(self):
+        a2 = m.get(A2, 0)
+        a2.a = 'updated'
+        m.save(a2)
+
+        a = m.get(A, 0)
+        a2 = m.get(A2, 0)
+
+        self.assertEqual('A() in db at 0', a.a)
+        self.assertEqual('updated', a2.a)
+
+    def test_create(self):
+        a2 = A2()
+        a2.a = 'created'
+        m.create(a2)
+
+        self.assertEqual('created', m.get(A2, a2.id).a)
+        self.assertRaises(LookupError, m.get, A, a2.id)
 
 if __name__ == '__main__':
     unittest.main()
