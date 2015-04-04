@@ -3,6 +3,7 @@ import unittest
 from omlite import db, Field
 from omlite import storable_pk_autoinc, storable_pk_netaddrtime_uuid1
 from omlite import get_class_meta, table_name
+import omlite as m
 
 
 @table_name('aa')
@@ -34,7 +35,7 @@ def make(cls, **attrs):
 
 def insert(cls, **attrs):
     obj = make(cls, **attrs)
-    db.save(obj)
+    m.save(obj)
     return obj.id
 
 
@@ -72,13 +73,13 @@ class Test_meta(unittest.TestCase):
 class Test_storable_READ(TestCase):
 
     def test_by_id(self):
-        a = db.get(A, 0)
+        a = m.get(A, 0)
 
         self.assertEqual(0, a.id)
         self.assertEqual('A() in db at 0', a.a)
         self.assertIsInstance(a, A)
 
-        b = db.get(B, 2)
+        b = m.get(B, 2)
 
         self.assertEqual(2, b.id)
         self.assertEqual('B() in db at 2', b.b)
@@ -90,9 +91,9 @@ class Test_storable_CREATE(TestCase):
     def test(self):
         a = A()
         a.a = 'A created in db'
-        db.save(a)
+        m.save(a)
 
-        a_from_db = db.get(A, a.id)
+        a_from_db = m.get(A, a.id)
 
         self.assertEqual('A created in db', a_from_db.a)
 
@@ -100,11 +101,11 @@ class Test_storable_CREATE(TestCase):
 class Test_storable_UPDATE(TestCase):
 
     def test(self):
-        a = db.get(A, 0)
+        a = m.get(A, 0)
         a.a = 'overwritten field'
-        db.save(a)
+        m.save(a)
 
-        a_from_db = db.get(A, 0)
+        a_from_db = m.get(A, 0)
         self.assertEqual('overwritten field', a_from_db.a)
         self.assertNotEqual(id(a), id(a_from_db))
 
@@ -112,35 +113,35 @@ class Test_storable_UPDATE(TestCase):
 class Test_storable_DELETE(TestCase):
 
     def test_deleted(self):
-        a = db.get(A, 0)
-        db.delete(a)
+        a = m.get(A, 0)
+        m.delete(a)
 
         self.assertIsNone(a.id)
-        self.assertRaises(LookupError, db.get, A, 0)
+        self.assertRaises(LookupError, m.get, A, 0)
 
     def test_deleted_can_be_resaved_with_new_id(self):
-        a = db.get(A, 0)
-        db.delete(a)
+        a = m.get(A, 0)
+        m.delete(a)
 
-        db.save(a)
+        m.save(a)
 
-        a_from_db = db.get(A, a.id)
+        a_from_db = m.get(A, a.id)
         self.assertEqual(a.a, a_from_db.a)
 
 
 class Test_storable_inheritance(TestCase):
 
     def test_by_id(self):
-        ab = db.get(AB, 2)
+        ab = m.get(AB, 2)
 
         self.assertEqual(ab.b, 'X() in db at 2')
 
     def test_update(self):
-        ab = db.get(AB, 2)
+        ab = m.get(AB, 2)
         ab.a = 'persisted attribute'
-        db.save(ab)
+        m.save(ab)
 
-        ab_from_db = db.get(AB, 2)
+        ab_from_db = m.get(AB, 2)
 
         self.assertEqual(ab_from_db.b, 'X() in db at 2')
         self.assertEqual(ab.a, 'persisted attribute')
@@ -156,26 +157,26 @@ class Test_Storable_with_UUID_primary_key(TestCase):
     def test_create(self):
         id = insert(F, future='newly saved')
 
-        from_db = db.get(F, id)
+        from_db = m.get(F, id)
         self.assertEqual('newly saved', from_db.future)
 
     def test_update(self):
-        f = db.get(F, TEST_UUID)
+        f = m.get(F, TEST_UUID)
         f.future = 'unknown'
-        db.save(f)
+        m.save(f)
 
-        from_db = db.get(F, TEST_UUID)
+        from_db = m.get(F, TEST_UUID)
         self.assertEqual('unknown', from_db.future)
 
     def test_delete(self):
-        f = db.get(F, TEST_UUID)
-        db.delete(f)
+        f = m.get(F, TEST_UUID)
+        m.delete(f)
 
         self.assertIsNone(f.id)
-        self.assertRaises(LookupError, db.get, F, TEST_UUID)
+        self.assertRaises(LookupError, m.get, F, TEST_UUID)
 
     def test_by_id(self):
-        from_db = db.get(F, TEST_UUID)
+        from_db = m.get(F, TEST_UUID)
         self.assertEqual('?', from_db.future)
 
 
@@ -188,12 +189,12 @@ class Test_transaction(TestCase):
     def test_exception_rolls_back_changes(self):
         try:
             with db.transaction():
-                f = db.get(F, TEST_UUID)
-                db.delete(f)
+                f = m.get(F, TEST_UUID)
+                m.delete(f)
 
                 raise TestException()
         except TestException:
-            f = db.get(F, TEST_UUID)
+            f = m.get(F, TEST_UUID)
             self.assertEqual('?', f.future)
             return
 
@@ -218,9 +219,9 @@ class Test_transaction(TestCase):
             b_id = failing_internal_transaction()
             self.assertIsNotNone(b_id)
 
-        a = db.get(A, a_id)
+        a = m.get(A, a_id)
         self.assertEqual('new A', a.a)
-        self.assertRaises(LookupError, db.get, B, b_id)
+        self.assertRaises(LookupError, m.get, B, b_id)
 
     def test_nested_w_outer_exception_rolls_back_all_changes(self):
         try:
@@ -232,8 +233,8 @@ class Test_transaction(TestCase):
 
                 raise TestException()
         except TestException:
-            self.assertRaises(LookupError, db.get, A, a_id)
-            self.assertRaises(LookupError, db.get, B, b_id)
+            self.assertRaises(LookupError, m.get, A, a_id)
+            self.assertRaises(LookupError, m.get, B, b_id)
             return
 
         self.fail('expected TestException was not raised')

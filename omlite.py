@@ -11,10 +11,9 @@ Restrictions by design:
 - the name of the primary key is *id*.
 - no query language - SQL has one already
 
-TODO?: omlite.make(storable_class, **field_values)
-TODO: Database.create(object)
+TODO?: make(storable_class, **field_values)
+TODO: create(object)
 TODO: create_table(storable_class)
-FIXME: CRUD operations must be executable only inside transactions!
 '''
 
 import contextlib
@@ -86,60 +85,6 @@ class Database(object):
     def execute_sql(self, sql, params):
         with self.get_cursor(sql, params):
             pass
-
-    # CRUD
-    def get(self, storable_class, id):
-        return list(self.filter(storable_class, 'id=?', id))[0]
-
-    def filter(self, storable_class, sql_predicate, *params):
-        meta = get_class_meta(storable_class)
-
-        sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
-            table=meta.table_name, predicate=sql_predicate)
-
-        with self.get_cursor(sql, params) as cursor:
-            while True:
-                yield read_row(storable_class, cursor)
-
-    def save(self, object):
-        if object.id is None:
-            self.create(object)
-        else:
-            self.__update(object)
-
-    def create(self, object):
-        meta = get_meta(object)
-
-        meta.primary_key.generate_id(object)
-
-        sql = 'INSERT INTO {table}({fields}) VALUES ({values})'.format(
-            table=meta.table_name,
-            fields=', '.join(meta.ordered_fields),
-            values=', '.join(['?'] * len(meta.ordered_fields)))
-
-        values = [getattr(object, attr) for attr in meta.ordered_fields]
-        with self.get_cursor(sql, values) as cursor:
-            meta.primary_key.save_generated_id(cursor, object)
-
-    def __update(self, object):
-        meta = get_meta(object)
-        fields = ['{} = ?'.format(attr) for attr in meta.ordered_fields]
-        values = [getattr(object, attr) for attr in meta.ordered_fields]
-        pk_value = object.id
-
-        sql = 'UPDATE {table} SET {fields} WHERE id=?'.format(
-            table=meta.table_name,
-            fields=', '.join(fields))
-
-        self.execute_sql(sql, values + [pk_value])
-
-    def delete(self, object):
-        meta = get_meta(object)
-
-        sql = 'DELETE FROM {table} WHERE id=?'.format(table=meta.table_name)
-        self.execute_sql(sql, [object.id])
-
-        object.id = None
 
     # Transactions
     @contextlib.contextmanager
@@ -234,6 +179,7 @@ class StorableMeta(object):
                 setattr(object, attr, None)
 
 
+# Class decorators
 def database(database):
     ''' Set database on a storable class
 
@@ -292,6 +238,7 @@ storable_pk_random_uuid4 = functools.partial(
     id=UUIDPrimaryKey(uuid.uuid4))
 
 
+# Internals
 def get_class_meta(storable_class):
     return getattr(storable_class, STORABLE_META_ATTR)
 
@@ -313,3 +260,63 @@ def read_row(storable_class, cursor):
 
     meta.initialize_fields(obj)
     return obj
+
+
+# CRUD / Object Mapper
+def get(storable_class, id):
+    return list(filter(storable_class, 'id=?', id))[0]
+
+
+def filter(storable_class, sql_predicate, *params):
+    meta = get_class_meta(storable_class)
+
+    sql = 'SELECT * FROM {table} WHERE {predicate}'.format(
+        table=meta.table_name, predicate=sql_predicate)
+
+    with meta.database.get_cursor(sql, params) as cursor:
+        while True:
+            yield read_row(storable_class, cursor)
+
+
+def save(object):
+    if object.id is None:
+        create(object)
+    else:
+        _update(object)
+
+
+def create(object):
+    meta = get_meta(object)
+
+    meta.primary_key.generate_id(object)
+
+    sql = 'INSERT INTO {table}({fields}) VALUES ({values})'.format(
+        table=meta.table_name,
+        fields=', '.join(meta.ordered_fields),
+        values=', '.join(['?'] * len(meta.ordered_fields)))
+
+    values = [getattr(object, attr) for attr in meta.ordered_fields]
+    with meta.database.get_cursor(sql, values) as cursor:
+        meta.primary_key.save_generated_id(cursor, object)
+
+
+def _update(object):
+    meta = get_meta(object)
+    fields = ['{} = ?'.format(attr) for attr in meta.ordered_fields]
+    values = [getattr(object, attr) for attr in meta.ordered_fields]
+    pk_value = object.id
+
+    sql = 'UPDATE {table} SET {fields} WHERE id=?'.format(
+        table=meta.table_name,
+        fields=', '.join(fields))
+
+    meta.database.execute_sql(sql, values + [pk_value])
+
+
+def delete(object):
+    meta = get_meta(object)
+
+    sql = 'DELETE FROM {table} WHERE id=?'.format(table=meta.table_name)
+    meta.database.execute_sql(sql, [object.id])
+
+    object.id = None
