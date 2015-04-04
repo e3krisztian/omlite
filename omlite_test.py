@@ -4,6 +4,7 @@ from omlite import db, Field
 from omlite import storable_pk_autoinc, storable_pk_netaddrtime_uuid1
 from omlite import get_class_meta, table_name
 import omlite as m
+# TODO: test @database
 
 
 @table_name('aa')
@@ -97,6 +98,24 @@ class Test_storable_CREATE(TestCase):
 
         self.assertEqual('A created in db', a_from_db.a)
 
+    def test_create_with_id(self):
+        a = A()
+        a.id = 8080
+        a.a = 'succeeded'
+        m.create(a)
+
+        a_from_db = m.get(A, id=8080)
+        self.assertEqual('succeeded', a_from_db.a)
+
+    def test_create_without_id(self):
+        a = A()
+        a.a = 'succeeded'
+        m.create(a)
+        self.assertIsNotNone(a.id)
+
+        a_from_db = m.get(A, id=a.id)
+        self.assertEqual('succeeded', a_from_db.a)
+
 
 class Test_storable_UPDATE(TestCase):
 
@@ -159,6 +178,24 @@ class Test_Storable_with_UUID_primary_key(TestCase):
 
         from_db = m.get(F, id)
         self.assertEqual('newly saved', from_db.future)
+
+    def test_create_with_id(self):
+        f = F()
+        f.id = 'create with uuid'
+        f.future = 'succeeded'
+        m.create(f)
+
+        f_from_db = m.get(F, id='create with uuid')
+        self.assertEqual('succeeded', f_from_db.future)
+
+    def test_create_without_id(self):
+        f = F()
+        f.future = 'succeeded'
+        m.create(f)
+        self.assertIsNotNone(f.id)
+
+        f_from_db = m.get(F, id=f.id)
+        self.assertEqual('succeeded', f_from_db.future)
 
     def test_update(self):
         f = m.get(F, TEST_UUID)

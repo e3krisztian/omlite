@@ -12,7 +12,6 @@ Restrictions by design:
 - no query language - SQL has one already
 
 TODO?: make(storable_class, **field_values)
-TODO: create(object)
 TODO: create_table(storable_class)
 '''
 
@@ -286,6 +285,14 @@ def save(object):
 
 
 def create(object):
+    ''' Create a new database row for object.
+
+    There are two cases:
+    - the object has None in the id field
+      - a generated id is assigned
+    - the object has the id field pre-filled
+      - object is inserted into database with the given id
+    '''
     meta = get_meta(object)
 
     meta.primary_key.generate_id(object)
