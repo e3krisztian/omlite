@@ -1,3 +1,4 @@
+
 '''
 O      M            LITE
  bject  apper for SQ     - an experiment
@@ -12,7 +13,7 @@ Restrictions by design:
 - no query language - SQL has one already
 
 TODO?: make(storable_class, **field_values)
-TODO: create_table(storable_class)
+TODO: logging
 '''
 
 import contextlib
@@ -29,15 +30,18 @@ __all__ = (
     # CRUD / Data Mapper functions
     'get', 'filter', 'save', 'create', 'delete',
     # for more control and extras
-    'Database', 'database', 'table_name',
+    'Database', 'database', 'table_name', 'sql_constraint',
+    'table_exists', 'create_table',
     'get_storable',
     'PrimaryKey', 'UUIDPrimaryKey', 'AutoincrementPrimaryKey',
+    'IntegrityError',
 )
 
 
 AUTOCOMMIT = None
 PK_FIELD = 'id'
 STORABLE_META_ATTR = '__omlite_meta'
+IntegrityError = sqlite3.IntegrityError
 
 
 class Database(object):
@@ -172,12 +176,16 @@ class StorableMeta(object):
         self.primary_key = self.fields[PK_FIELD]
         self.database = db
         self.table_name = storable_class.__name__.lower()
+        self.constraints = []
 
     def initialize_fields(self, object):
         ''' initialize all uninitialized database fields to None'''
         for attr, field in self.fields.items():
             if getattr(object, attr) is field:
                 setattr(object, attr, None)
+
+    def add_constraint(self, constraint):
+        self.constraints.append(constraint)
 
 
 # Class decorators
@@ -209,6 +217,20 @@ def table_name(table_name):
         meta = get_class_meta(storable_class)
         assert meta is not None
         meta.table_name = table_name
+        return storable_class
+    return decorate
+
+
+def sql_constraint(contstraint):
+    ''' Add a table constraint to a storable class definition
+
+    Makes a difference only when the database table is generated
+    by create_table().
+    '''
+    def decorate(storable_class):
+        meta = get_class_meta(storable_class)
+        assert meta is not None
+        meta.add_constraint(contstraint)
         return storable_class
     return decorate
 
@@ -344,3 +366,35 @@ def delete(object):
     meta.database.execute_sql(sql, [object.id])
 
     object.id = None
+
+
+# Database structure
+def table_exists(storable_class):
+    meta = get_class_meta(storable_class)
+    sql = '''SELECT 1 FROM sqlite_master where type='table' and name=?'''
+    with meta.database.get_cursor(sql, [meta.table_name]) as c:
+        return bool(list(c))
+
+
+def create_table(storable_class):
+    meta = get_class_meta(storable_class)
+
+    def define_field(attr, sql_declaration):
+        if sql_declaration:
+            return '{} {}'.format(attr, sql_declaration)
+        return attr
+
+    field_definitions = [
+        define_field(attr, field.sql_declaration)
+        for attr, field in meta.fields.items()
+    ]
+    field_sep = ',\n' + (' ' * 8)
+    sql = '''
+    CREATE TABLE {table_name}(
+        {field_definitions}
+    );
+    '''.format(
+        table_name=meta.table_name,
+        field_definitions=field_sep.join(field_definitions + meta.constraints),
+    )
+    meta.database.connection.execute(sql)

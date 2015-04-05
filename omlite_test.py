@@ -346,5 +346,63 @@ class Test_multiple_databases(unittest.TestCase):
         self.assertEqual('created', m.get(A2, a2.id).a)
         self.assertRaises(LookupError, m.get, A, a2.id)
 
+
+class Test_table_exists(TestCase):
+
+    def test_existing_table(self):
+        self.assertTrue(m.table_exists(A))
+        self.assertTrue(m.table_exists(B))
+        self.assertTrue(m.table_exists(AB))
+        self.assertTrue(m.table_exists(F))
+
+    def test_nonexisting_table(self):
+        db.connection.executescript(
+            '''\
+            drop table aa;
+            drop table b;
+            drop table x;
+            drop table f;
+            ''')
+        self.assertFalse(m.table_exists(A))
+        self.assertFalse(m.table_exists(B))
+        self.assertFalse(m.table_exists(AB))
+        self.assertFalse(m.table_exists(F))
+
+
+class Test_create_table(unittest.TestCase):
+
+    def test_usable_table_is_created(self):
+        db.connect(':memory:')
+        self.assertFalse(m.table_exists(A))
+
+        m.create_table(A)
+
+        self.assertTrue(m.table_exists(A))
+        insert(A, a='new value')
+
+    def test_custom_database(self):
+        db2.connect(':memory:')
+        self.assertFalse(m.table_exists(A2))
+
+        m.create_table(A2)
+
+        self.assertTrue(m.table_exists(A2))
+        insert(A2, a='new value')
+
+    def test_table_constraint(self):
+        @m.sql_constraint('''CHECK (a IN ('A', 'ABC'))''')
+        @m.sql_constraint('''CHECK (length(a) < 2)''')
+        @storable_pk_autoinc
+        class A(object):
+            a = Field()
+
+        db.connect(':memory:')
+        m.create_table(A)
+
+        insert(A, a='A')
+        self.assertRaises(m.IntegrityError, insert, A, a='B')
+        self.assertRaises(m.IntegrityError, insert, A, a='ABC')
+        insert(A, a='A')
+
 if __name__ == '__main__':
     unittest.main()
