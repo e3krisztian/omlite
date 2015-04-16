@@ -47,13 +47,13 @@ def given_a_database():
         create table aa(id integer primary key, a);
         insert into aa(id, a) values (0, 'A() in db at 0');
         insert into aa(id, a) values (1, 'A() in db at 1');
-        create table b(id integer primary key, b);
-        insert into b(id, b) values (0, 'B() in db at 0');
-        insert into b(id, b) values (2, 'B() in db at 2');
+        create table bs(id integer primary key, b);
+        insert into bs(id, b) values (0, 'B() in db at 0');
+        insert into bs(id, b) values (2, 'B() in db at 2');
         create table x(id integer primary key, a, b, x);
         insert into x(id, b) values (2, 'X() in db at 2');
-        create table f(id varchar primary key, future);
-        insert into f(id, future)
+        create table fs(id varchar primary key, future);
+        insert into fs(id, future)
             values ('9764d716-2b5b-4a6f-9c75-621377a80028', '?');
         ''')
 
@@ -68,7 +68,7 @@ class Test_meta(unittest.TestCase):
 
     def test_table_name(self):
         self.assertEqual('aa', get_class_meta(A).table_name)
-        self.assertEqual('b', get_class_meta(B).table_name)
+        self.assertEqual('bs', get_class_meta(B).table_name)
 
 
 class Test_storable_READ(TestCase):
@@ -359,9 +359,9 @@ class Test_table_exists(TestCase):
         db.connection.executescript(
             '''\
             drop table aa;
-            drop table b;
+            drop table bs;
             drop table x;
-            drop table f;
+            drop table fs;
             ''')
         self.assertFalse(m.table_exists(A))
         self.assertFalse(m.table_exists(B))
@@ -392,6 +392,7 @@ class Test_create_table(unittest.TestCase):
     def test_table_constraint(self):
         @m.sql_constraint('''CHECK (a IN ('A', 'ABC'))''')
         @m.sql_constraint('''CHECK (length(a) < 2)''')
+        @m.table_name('a_s')
         @storable_pk_autoinc
         class A(object):
             a = Field()

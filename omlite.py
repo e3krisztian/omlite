@@ -175,7 +175,7 @@ class StorableMeta(object):
         self.ordered_fields = tuple(sorted(self.fields))
         self.primary_key = self.fields[PK_FIELD]
         self.database = db
-        self.table_name = storable_class.__name__.lower()
+        self.table_name = '{}s'.format(storable_class.__name__.lower())
         self.constraints = []
 
     def initialize_fields(self, object):
