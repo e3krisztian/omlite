@@ -15,11 +15,15 @@ setup(
     long_description=description,
     url='https://github.com/krisztianfekete/omlite',
 
+    keywords='sqlite object mapper',
     classifiers=[
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
         'Topic :: Database',
         'License :: Public Domain',
+        'Programming Language :: Python',
+        'Programming Language :: Python :: 2',
+        'Programming Language :: Python :: 3',
     ],
     license='Unlicense',
 
