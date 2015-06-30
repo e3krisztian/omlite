@@ -238,15 +238,30 @@ def sql_constraint(contstraint):
 def get_storable(cls, id):
     setattr(cls, PK_FIELD, id)
     assert PK_FIELD in dir(cls)
+
     meta = StorableMeta(cls)
 
-    class decorated(cls):
-        def __init__(self, *args, **kwargs):
-            super(decorated, self).__init__(*args, **kwargs)
-            meta.initialize_fields(self)
-    decorated.__name__ = 'omlite_{}'.format(cls.__name__)
-    setattr(decorated, STORABLE_META_ATTR, meta)
-    return decorated
+    # patch class to initialize its fields
+
+    # originally cls was subclassed and initialization happened in the new
+    # class, however it resulted in an endless recursion under python2:
+    # where
+    #   super(ClassName, self).__init__()
+    # equals
+    #   ClassName.__init__(self)
+    # if ClassName refers to the subclass (which it does after @storable
+    # decoration)
+    orig_init = cls.__init__
+    def __init__(self, *args, **kwargs):
+        original_return_value = orig_init(self, *args, **kwargs)
+        meta.initialize_fields(self)
+        return original_return_value
+    __init__.__doc__ = orig_init.__doc__
+    cls.__init__ = __init__
+
+    setattr(cls, STORABLE_META_ATTR, meta)
+
+    return cls
 
 storable_pk_autoinc = functools.partial(
     get_storable,
