@@ -405,5 +405,27 @@ class Test_create_table(unittest.TestCase):
         self.assertRaises(m.IntegrityError, insert, A, a='ABC')
         insert(A, a='A')
 
+
+class PlainA(object):
+    def __init__(self):
+        super(PlainA, self).__init__()
+        self.a_init = True
+
+
+@storable_pk_autoinc
+class SA(PlainA):
+    def __init__(self):
+        super(SA, self).__init__()
+        self.sa_init = True
+
+
+class Test_super_in_subclass(TestCase):
+
+    def test_all_inits_are_called(self):
+        sa = SA()
+        self.assertTrue(sa.sa_init)
+        self.assertTrue(sa.a_init)
+
+
 if __name__ == '__main__':
     unittest.main()
