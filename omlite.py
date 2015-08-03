@@ -1,16 +1,22 @@
 
 '''
-O      M            LITE
- bject  apper for SQ     - an experiment
+Object Mapper for sqLITE
 
-the R from ORM is intentionally missing, R is support for relations.
+Support for mapping relations between objects is intentionally missing.
+
+Goals:
+
+- one to one mapping between objects and database rows
+- correctness
+- ease of use
+- small, simple implementation
 
 Restrictions by design:
 
-- maps class to table, table row to object isinstances
-- relations are *NOT* supported, only single objects
+- maps class to table, table row to object instances
+- relations between objects are *NOT* supported
 - the name of the primary key is *id*.
-- no query language - SQL has one already
+- no query language other than SQL
 
 TODO?: make(storable_class, **field_values)
 TODO: logging
@@ -323,7 +329,7 @@ def filter(storable_class, sql_predicate, *params):
 
 
 def save(object):
-    ''' I create new or update an existing object in database.
+    ''' I create new or update existing object in the database.
 
     An object is treated as new, if its :id is None.
     If the object's id is not None, the matching row is updated.
@@ -335,7 +341,7 @@ def save(object):
 
 
 def create(object):
-    ''' I create a new database row for object.
+    ''' I create new object in the database.
 
     There are two cases:
     - the object has None in the id field
@@ -359,15 +365,14 @@ def create(object):
 
 def _update(object):
     meta = get_meta(object)
-    fields = ['{} = ?'.format(attr) for attr in meta.ordered_fields]
+    set_fields = ['{} = ?'.format(attr) for attr in meta.ordered_fields]
     values = [getattr(object, attr) for attr in meta.ordered_fields]
-    pk_value = object.id
 
-    sql = 'UPDATE {table} SET {fields} WHERE id=?'.format(
+    sql = 'UPDATE {table} SET {set_fields} WHERE id=?'.format(
         table=meta.table_name,
-        fields=', '.join(fields))
+        set_fields=', '.join(set_fields))
 
-    meta.database.execute_sql(sql, values + [pk_value])
+    meta.database.execute_sql(sql, values + [object.id])
 
 
 def delete(object):

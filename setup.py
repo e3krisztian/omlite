@@ -10,7 +10,7 @@ setup(
     version='0.1.0',
 
     author='Krisztián Fekete',
-    author_email='krisztian.fekete@gmail.com',
+    author_email='fekete.krisztyan@gmail.com',
     description='Object Mapper for SQLite',
     long_description=description,
     url='https://github.com/krisztianfekete/omlite',
