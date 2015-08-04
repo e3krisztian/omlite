@@ -14,9 +14,11 @@ Goals:
 Restrictions by design:
 
 - maps class to table, table row to object instances
-- relations between objects are *NOT* supported
+- relations between objects at the Python level are *NOT* supported
+    + at the database level constraints including foreign keys are supported
 - the name of the primary key is *id*.
-- no query language other than SQL
+
+Query language is SQL based.
 
 TODO?: make(storable_class, **field_values)
 TODO: logging

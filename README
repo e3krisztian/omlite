@@ -1,4 +1,20 @@
     O      M            LITE
-     bject  apper for SQ     - an experiment
+     bject  apper for SQ
 
-the R from ORM is intentionally missing, R is support for relations.
+Support for mapping relations between objects is intentionally missing.
+
+Goals:
+
+- one to one mapping between objects and database rows
+- correctness
+- ease of use
+- small, simple implementation
+
+Restrictions by design:
+
+- maps class to table, table row to object instances
+- relations between objects at the Python level are *NOT* supported
+    + at the database level constraints including foreign keys are supported
+- the name of the primary key is *id*.
+
+Query language is SQL based.
