@@ -330,6 +330,14 @@ def filter(storable_class, sql_predicate, *params):
             yield read_row(storable_class, cursor)
 
 
+def get_all(storable_class):
+    ''' I am streaming all objects in the database.
+    '''
+    # see https://www.sqlite.org/datatype3.html
+    true = 1
+    return filter(storable_class, sql_predicate=true)
+
+
 def save(object):
     ''' I create new or update existing object in the database.
 

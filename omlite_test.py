@@ -86,6 +86,17 @@ class Test_storable_READ(TestCase):
         self.assertEqual('B() in db at 2', b.b)
         self.assertIsInstance(b, B)
 
+    def test_filter(self):
+        objects = list(m.filter(A, 'a like "%1"'))
+        a, = objects
+        self.assertEqual(1, a.id)
+
+    def test_get_all(self):
+        objects = sorted(m.get_all(A), key=lambda a: a.a)
+        a0, a1 = objects
+        self.assertEqual(0, a0.id)
+        self.assertEqual(1, a1.id)
+
 
 class Test_storable_CREATE(TestCase):
 
