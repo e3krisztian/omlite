@@ -36,7 +36,7 @@ __all__ = (
     'storable_pk_netaddrtime_uuid1', 'storable_pk_random_uuid4',
     'Field',
     # CRUD / Data Mapper functions
-    'get', 'filter', 'save', 'create', 'delete',
+    'get', 'filter', 'save', 'create', 'delete', 'delete_but_keep_id',
     # for more control and extras
     'Database', 'database', 'table_name', 'sql_constraint',
     'table_exists', 'create_table',
@@ -385,16 +385,21 @@ def _update(object):
     meta.database.execute_sql(sql, values + [object.id])
 
 
-def delete(object):
+def delete_but_keep_id(object):
     ''' I delete object from database.
-
-    I also set the object's :id to None, so it can be resaved if needed.
     '''
     meta = get_meta(object)
 
     sql = 'DELETE FROM {table} WHERE id=?'.format(table=meta.table_name)
     meta.database.execute_sql(sql, [object.id])
 
+
+def delete(object, clear_id=True):
+    ''' I delete object from database.
+
+    I also set the object's :id to None, so it can be resaved if needed.
+    '''
+    delete_but_keep_id(object)
     object.id = None
 
 

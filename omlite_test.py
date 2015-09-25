@@ -149,6 +149,14 @@ class Test_storable_DELETE(TestCase):
         self.assertIsNone(a.id)
         self.assertRaises(LookupError, m.get, A, 0)
 
+    def test_keeping_the_id(self):
+        a = m.get(A, 0)
+        a_id = a.id
+        m.delete_but_keep_id(a)
+
+        self.assertEqual(a_id, a.id)
+        self.assertRaises(LookupError, m.get, A, 0)
+
     def test_deleted_can_be_resaved_with_new_id(self):
         a = m.get(A, 0)
         m.delete(a)
