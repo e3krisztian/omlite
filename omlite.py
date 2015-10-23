@@ -394,7 +394,7 @@ def delete_but_keep_id(object):
     meta.database.execute_sql(sql, [object.id])
 
 
-def delete(object, clear_id=True):
+def delete(object):
     ''' I delete object from database.
 
     I also set the object's :id to None, so it can be resaved if needed.
